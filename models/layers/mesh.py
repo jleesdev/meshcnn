@@ -49,7 +49,7 @@ class Mesh:
 
     def clean(self, edges_mask, groups):
         edges_mask = edges_mask.astype(bool)
-        torch_mask = torch.from_numpy(edges_mask.copy())
+        torch_mask = torch.from_numpy(np.array(edges_mask.copy(), dtype=np.uint8))
         self.gemm_edges = self.gemm_edges[edges_mask]
         self.edges = self.edges[edges_mask]
         self.sides = self.sides[edges_mask]
@@ -70,6 +70,20 @@ class Mesh:
         self.pool_count += 1
         self.export()
 
+    def get_vs_fs(self, vcolor=None):
+        faces = []
+        vs = self.vs[self.v_mask]
+        gemm = np.array(self.gemm_edges)
+        new_indices = np.zeros(self.v_mask.shape[0], dtype=np.int32)
+        new_indices[self.v_mask] = np.arange(0, np.ma.where(self.v_mask)[0].shape[0])
+        for edge_index in range(len(gemm)):
+            cycles = self.__get_cycle(gemm, edge_index)
+            for cycle in cycles:
+                faces.append(self.__cycle_to_face(cycle, new_indices))
+        faces = np.asarray(faces) + 1
+        vs = np.asarray(vs)
+        
+        return {'vs':np.array([vs]), 'fs':np.array([faces])}
 
     def export(self, file=None, vcolor=None):
         if file is None:
@@ -155,7 +169,7 @@ class Mesh:
                                'occurrences': [],
                                'old2current': np.arange(self.edges_count, dtype=np.int32),
                                'current2old': np.arange(self.edges_count, dtype=np.int32),
-                               'edges_mask': [torch.ones(self.edges_count,dtype=torch.bool)],
+                               'edges_mask': [torch.ones(self.edges_count,dtype=torch.int8)],
                                'edges_count': [self.edges_count],
                               }
         if self.export_folder:

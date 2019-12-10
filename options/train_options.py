@@ -25,4 +25,5 @@ class TrainOptions(BaseOptions):
         # tensorboard visualization
         self.parser.add_argument('--no_vis', action='store_true', help='will not use tensorboard')
         self.parser.add_argument('--verbose_plot', action='store_true', help='plots network weights, etc.')
+        self.parser.add_argument('--optim', type=str, default='Adam', help='plots network weights, etc.')
         self.is_train = True

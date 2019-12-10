@@ -2,6 +2,7 @@ from __future__ import print_function
 import torch
 import numpy as np
 import os
+import random
 
 
 def mkdir(path):
@@ -66,3 +67,9 @@ def calculate_entropy(np_array):
             entropy -= a * np.log(a)
     entropy /= np.log(np_array.shape[0])
     return entropy
+
+def pad_vertices(vs, length) :
+    vs_list = list(vs)
+    while len(vs_list) < length :
+        vs_list.append(np.mean(vs, axis=0))
+    return np.asarray(vs_list)

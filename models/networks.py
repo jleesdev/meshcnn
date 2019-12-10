@@ -7,7 +7,12 @@ from models.layers.mesh_conv import MeshConv
 import torch.nn.functional as F
 from models.layers.mesh_pool import MeshPool
 from models.layers.mesh_unpool import MeshUnpool
+import matplotlib.pyplot as plt
+from mpl_toolkits import mplot3d
 
+import sys 
+sys.path.append('/home/students/jlee/libs/chamferdist')
+from chamferdist import ChamferDistance
 
 ###############################################################################
 # Helper Functions
@@ -106,15 +111,23 @@ def define_classifier(input_nc, ncf, ninput_edges, nclasses, opt, gpu_ids, arch,
         pool_res = [ninput_edges] + opt.pool_res
         net = MeshEncoderDecoder(pool_res, down_convs, up_convs, blocks=opt.resblocks,
                                  transfer_data=True)
+        print('meshunet is created')
+    elif arch == 'meshae':
+        net = MeshAutoEncoder(norm_layer, input_nc, ncf, nclasses, ninput_edges, opt.pool_res, opt.fc_n,
+                          opt.resblocks)
     else:
         raise NotImplementedError('Encoder model name [%s] is not recognized' % arch)
     return init_net(net, init_type, init_gain, gpu_ids)
 
 def define_loss(opt):
     if opt.dataset_mode == 'classification':
+        # loss = torch.nn.NLLLoss()
         loss = torch.nn.CrossEntropyLoss()
     elif opt.dataset_mode == 'segmentation':
         loss = torch.nn.CrossEntropyLoss(ignore_index=-1)
+    elif opt.dataset_mode == 'autoencoder':
+        #loss = torch.nn.L1Loss()
+        loss = ChamferDistance()
     return loss
 
 ##############################################################################
@@ -139,21 +152,160 @@ class MeshConvNet(nn.Module):
 
         self.gp = torch.nn.AvgPool1d(self.res[-1])
         # self.gp = torch.nn.MaxPool1d(self.res[-1])
-        self.fc1 = nn.Linear(self.k[-1], fc_n)
-        self.fc2 = nn.Linear(fc_n, nclasses)
+        self.fcs = []
+        self.fcs.append(nn.Linear(self.k[-1], fc_n[0]))
+        for i in range(len(fc_n)-1) :
+            self.fcs.append(nn.Linear(fc_n[i], fc_n[i+1]))
+        self.fcs = nn.ModuleList(self.fcs)
+        self.last_fc = nn.Linear(fc_n[-1], nclasses)
 
-    def forward(self, x, mesh):
-
+    def forward(self, x, mesh, writer=False, steps=None):
+        #print(len(mesh[0].vs))
+        x_max, x_min = max(mesh[0].vs[:,0]), min(mesh[0].vs[:,0])
+        y_max, y_min = max(mesh[0].vs[:,1]), min(mesh[0].vs[:,1])
+        z_max, z_min = max(mesh[0].vs[:,2]), min(mesh[0].vs[:,2])
+        fig = plt.figure()
+        ax = plt.axes(projection='3d')
+        ax.scatter3D(mesh[0].vs[:,0], mesh[0].vs[:,1], mesh[0].vs[:,2], marker='.')
+        ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+        # plt.savefig('/home/students/jlee/repos/meshcnn/original_mesh.png', bbox_inches='tight')
+        if writer is not False:
+            writer.add_figure('orignal/mesh', fig, steps)
+            vsfs = mesh[0].get_vs_fs()
+            writer.add_mesh('original/pointcloud', vertices=vsfs['vs'], global_step=steps)
+            writer.add_mesh('origianl/mesh', vertices=vsfs['vs'], faces=vsfs['fs'], global_step=steps)
+        plt.close()
+        
         for i in range(len(self.k) - 1):
             x = getattr(self, 'conv{}'.format(i))(x, mesh)
             x = F.relu(getattr(self, 'norm{}'.format(i))(x))
             x = getattr(self, 'pool{}'.format(i))(x, mesh)
+            vs = mesh[0].vs[mesh[0].v_mask]
+            #print(len(vs))
+            fig = plt.figure()
+            ax = plt.axes(projection='3d')
+            ax.scatter3D(vs[:,0], vs[:,1], vs[:,2], marker='.')
+            ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+            # plt.savefig('/home/students/jlee/repos/meshcnn/pooled_mesh_%d.png'%(i), bbox_inches='tight')
+            if writer is not False :
+                writer.add_figure('pooled_mesh/%d'%(i+1), fig, steps)
+                vs, fs = mesh[0].get_vs_fs()
+                writer.add_mesh('pooled_pointcloud/%d'%(i+1), vertices=vsfs['vs'], global_step=steps)
+                writer.add_mesh('pooled_mesh/%d'%(i+1), vertices=vsfs['vs'], faces=vsfs['fs'], global_step=steps)
+            plt.close()    
 
         x = self.gp(x)
         x = x.view(-1, self.k[-1])
 
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        for fc in self.fcs :
+            x = F.relu(fc(x))
+        x = self.last_fc(x)
+       # print (x.shape, x)
+        #x = F.softmax(x)
+        #print (x.shape, x)
+        return x
+    
+class MeshAutoEncoder(nn.Module):
+    """Network for learning a global shape descriptor (classification)
+    """
+    def __init__(self, norm_layer, nf0, conv_res, nclasses, input_res, pool_res, fc_n,
+                 nresblocks=3):
+        super(MeshAutoEncoder, self).__init__()
+        self.k = [nf0] + conv_res
+        self.res = [input_res] + pool_res
+        self.fc_n = fc_n
+        norm_args = get_norm_args(norm_layer, self.k[1:])
+
+        for i, ki in enumerate(self.k[:-1]):
+            setattr(self, 'conv{}'.format(i), MResConv(ki, self.k[i + 1], nresblocks))
+            setattr(self, 'norm{}'.format(i), norm_layer(**norm_args[i]))
+            setattr(self, 'pool{}'.format(i), MeshPool(self.res[i + 1]))
+
+
+        # self.gp = torch.nn.AvgPool1d(self.res[-1])
+        self.gp = torch.nn.MaxPool1d(self.res[-1])
+        self.decoder_fc1 = nn.Linear(self.k[-1], fc_n[0])
+        self.decoder_fc2 = nn.Linear(fc_n[0], fc_n[1])
+        self.decoder_fc3 = nn.Linear(fc_n[1], 1402*3)
+        
+        '''
+        self.mlps = []
+        self.mlps.append(nn.Conv1d(self.k[-1], fc_n[0], 1))
+        for i in range(len(fc_n)-1) :
+            self.mlps.append(nn.Conv1d(fc_n[i], fc_n[i+1], 1))
+        self.mlps = nn.ModuleList(self.mlps)
+        
+        self.bns = []
+        for i in range(len(fc_n)) :
+            self.bns.append(nn.BatchNorm1d(fc_n[i]))
+        self.bns = nn.ModuleList(self.bns)
+        self.last_mlp = nn.Conv1d(fc_n[-1], 3, 1)
+        '''
+
+    def forward(self, x, mesh, writer=False, steps=None):
+        #print(len(mesh[0].vs))
+        x_max, x_min = max(mesh[0].vs[:,0]), min(mesh[0].vs[:,0])
+        y_max, y_min = max(mesh[0].vs[:,1]), min(mesh[0].vs[:,1])
+        z_max, z_min = max(mesh[0].vs[:,2]), min(mesh[0].vs[:,2])
+        fig = plt.figure()
+        ax = plt.axes(projection='3d')
+        ax.scatter3D(mesh[0].vs[:,0], mesh[0].vs[:,1], mesh[0].vs[:,2], marker='.')
+        ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+        # plt.savefig('/home/students/jlee/repos/meshcnn/original_mesh.png', bbox_inches='tight')
+        if writer is not False:
+            writer.add_figure('orignal/mesh', fig, steps)
+            #vsfs = mesh[0].get_vs_fs()
+            #writer.add_mesh('original/pointcloud', vertices=vsfs['vs'], global_step=steps)
+            #writer.add_mesh('origianl/mesh', vertices=vsfs['vs'], faces=vsfs['fs'], global_step=steps)
+        plt.close()
+        
+        for i in range(len(self.k) - 1):
+            x = getattr(self, 'conv{}'.format(i))(x, mesh)
+            x = F.relu(getattr(self, 'norm{}'.format(i))(x))
+            x = getattr(self, 'pool{}'.format(i))(x, mesh)
+            
+            #print(len(vs))
+            
+            # plt.savefig('/home/students/jlee/repos/meshcnn/pooled_mesh_%d.png'%(i), bbox_inches='tight')
+            if writer is not False :
+                vs = mesh[0].vs[mesh[0].v_mask]
+                fig = plt.figure()
+                ax = plt.axes(projection='3d')
+                ax.scatter3D(vs[:,0], vs[:,1], vs[:,2], marker='.')
+                ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+                writer.add_figure('pooled_mesh/%d'%(i+1), fig, steps)
+                #vs, fs = mesh[0].get_vs_fs()
+                #writer.add_mesh('pooled_pointcloud/%d'%(i+1), vertices=vsfs['vs'], global_step=steps)
+                #writer.add_mesh('pooled_mesh/%d'%(i+1), vertices=vsfs['vs'], faces=vsfs['fs'], global_step=steps)
+                plt.close()    
+
+        x = self.gp(x)
+        x = x.view(-1, self.k[-1])
+        x = self.decoder_fc1(x)
+        x = self.decoder_fc2(x)
+        x = self.decoder_fc3(x)
+        x = x.view(-1, 1402, 3)
+        #print(x.shape)
+        '''
+        x = x.view(-1, self.k[-1], 1).repeat(1, 1, 1402)
+        #print(x.shape)
+        for i in range(len(self.fc_n)):
+            x = F.relu(self.bns[i](self.mlps[i](x)))
+        x = self.last_mlp(x)
+        x = x.transpose(2,1).contiguous()
+        #print('last layer:', x.shape)
+        '''
+        if writer is not False :
+            vs = x[0].data.cpu().numpy()
+            fig = plt.figure()
+            ax = plt.axes(projection='3d')
+            ax.scatter3D(vs[:,0], vs[:,1], vs[:,2], marker='.')
+            ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+            writer.add_figure('reconstructed_mesh', fig, steps)
+            #vs, fs = mesh[0].get_vs_fs()
+            #writer.add_mesh('pooled_pointcloud/%d'%(i+1), vertices=vsfs['vs'], global_step=steps)
+            #writer.add_mesh('pooled_mesh/%d'%(i+1), vertices=vsfs['vs'], faces=vsfs['fs'], global_step=steps)
+            plt.close() 
         return x
 
 class MResConv(nn.Module):
@@ -190,13 +342,26 @@ class MeshEncoderDecoder(nn.Module):
         unrolls.reverse()
         self.decoder = MeshDecoder(unrolls, up_convs, blocks=blocks, transfer_data=transfer_data)
 
-    def forward(self, x, meshes):
-        fe, before_pool = self.encoder((x, meshes))
-        fe = self.decoder((fe, meshes), before_pool)
+    def forward(self, x, meshes, writer, steps) :
+        mesh = meshes[0]
+        x_max, x_min = max(mesh.vs[:,0]), min(mesh.vs[:,0])
+        y_max, y_min = max(mesh.vs[:,1]), min(mesh.vs[:,1])
+        z_max, z_min = max(mesh.vs[:,2]), min(mesh.vs[:,2])
+        fig = plt.figure()
+        ax = plt.axes(projection='3d')
+        ax.scatter3D(mesh.vs[:,0], mesh.vs[:,1], mesh.vs[:,2], marker='.')
+        ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+        # plt.savefig('/home/students/jlee/repos/meshcnn/original_mesh.png', bbox_inches='tight')
+        if writer is not False:
+            writer.add_figure('orignal_mesh', fig, steps)
+        plt.close()
+        
+        fe, before_pool = self.encoder((x, meshes), writer, steps, (x_max, x_min, y_max, y_min, z_max, z_min))
+        fe = self.decoder((fe, meshes), before_pool, writer, steps, (x_max, x_min, y_max, y_min, z_max, z_min))
         return fe
 
-    def __call__(self, x, meshes):
-        return self.forward(x, meshes)
+    def __call__(self, x, meshes, writer=False, steps=None):
+        return self.forward(x, meshes, writer, steps)
 
 class DownConv(nn.Module):
     def __init__(self, in_channels, out_channels, blocks=0, pool=0):
@@ -326,12 +491,28 @@ class MeshEncoder(nn.Module):
         self.convs = nn.ModuleList(self.convs)
         reset_params(self)
 
-    def forward(self, x):
+    def forward(self, x, writer=False, steps=None, lims=None):
         fe, meshes = x
         encoder_outs = []
+        i = 0
         for conv in self.convs:
             fe, before_pool = conv((fe, meshes))
             encoder_outs.append(before_pool)
+            
+            # FOR TENSORBOARD
+            if writer is not False:
+                mesh = meshes[0]
+                x_max, x_min, y_max, y_min, z_max, z_min = lims
+                vs = mesh.vs[mesh.v_mask]
+                #print(len(vs))
+                fig = plt.figure()
+                ax = plt.axes(projection='3d')
+                ax.scatter3D(vs[:,0], vs[:,1], vs[:,2], marker='.')
+                ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+                # plt.savefig('/home/students/jlee/repos/meshcnn/original_mesh.png', bbox_inches='tight')
+                writer.add_figure('pooled_mesh/%d'%(i), fig, steps)
+                plt.close()
+            i += 1   
         if self.fcs is not None:
             if self.global_pool is not None:
                 fe = self.global_pool(fe)
@@ -345,8 +526,8 @@ class MeshEncoder(nn.Module):
                     fe = F.relu(fe)
         return fe, encoder_outs
 
-    def __call__(self, x):
-        return self.forward(x)
+    def __call__(self, x, writer=False, steps=None, lims=None):
+        return self.forward(x, writer, steps, lims)
 
 
 class MeshDecoder(nn.Module):
@@ -365,18 +546,46 @@ class MeshDecoder(nn.Module):
         self.up_convs = nn.ModuleList(self.up_convs)
         reset_params(self)
 
-    def forward(self, x, encoder_outs=None):
+    def forward(self, x, encoder_outs=None, writer=False, steps=None, lims=None):
         fe, meshes = x
         for i, up_conv in enumerate(self.up_convs):
             before_pool = None
             if encoder_outs is not None:
                 before_pool = encoder_outs[-(i+2)]
             fe = up_conv((fe, meshes), before_pool)
+            
+            # FOR TENSORBOARD
+            if writer is not False:
+                mesh = meshes[0]
+                x_max, x_min, y_max, y_min, z_max, z_min = lims
+                vs = mesh.vs[mesh.v_mask]
+                #print(len(vs))
+                fig = plt.figure()
+                ax = plt.axes(projection='3d')
+                ax.scatter3D(vs[:,0], vs[:,1], vs[:,2], marker='.')
+                ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+                # plt.savefig('/home/students/jlee/repos/meshcnn/original_mesh.png', bbox_inches='tight')
+                writer.add_figure('unpooled_mesh/%d'%(i), fig, steps)
+                plt.close()
+                
         fe = self.final_conv((fe, meshes))
+        # FOR TENSORBOARD
+        if writer is not False:
+            mesh = meshes[0]
+            x_max, x_min, y_max, y_min, z_max, z_min = lims
+            vs = mesh.vs[mesh.v_mask]
+            #print(len(vs))
+            fig = plt.figure()
+            ax = plt.axes(projection='3d')
+            ax.scatter3D(vs[:,0], vs[:,1], vs[:,2], marker='.')
+            ax.set_xlim((x_min, x_max)); ax.set_ylim((y_min, y_max)); ax.set_zlim((z_min, z_max));
+            # plt.savefig('/home/students/jlee/repos/meshcnn/original_mesh.png', bbox_inches='tight')
+            writer.add_figure('unpooled_mesh/%d'%(i+1), fig, steps)
+            plt.close()
         return fe
 
-    def __call__(self, x, encoder_outs=None):
-        return self.forward(x, encoder_outs)
+    def __call__(self, x, encoder_outs=None, writer=False, steps=None, lims=None):
+        return self.forward(x, encoder_outs, writer, steps, lims)
 
 def reset_params(model): # todo replace with my init
     for i, m in enumerate(model.modules()):

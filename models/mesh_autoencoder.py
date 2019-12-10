@@ -5,7 +5,7 @@ from util.util import seg_accuracy, print_network
 import matplotlib.pyplot as plt
 from mpl_toolkits import mplot3d
 
-class ClassifierModel:
+class AutoEncoderModel:
     """ Class for training Model weights
 
     :args opt: structure containing configuration params
@@ -48,10 +48,8 @@ class ClassifierModel:
 
     def set_input(self, data):
         input_edge_features = torch.from_numpy(data['edge_features']).float()
-        if self.opt.dataset_mode == 'autoencoder' :
-            labels = torch.from_numpy(data['label']).float()
-        else :
-            labels = torch.from_numpy(data['label']).long()
+        #print(data['label'].dtype, data['label'].shape)
+        labels = torch.from_numpy(data['label']).float()
         # set inputs
         self.edge_features = input_edge_features.to(self.device).requires_grad_(self.is_train)
         self.labels = labels.to(self.device)
@@ -66,7 +64,8 @@ class ClassifierModel:
         return out
 
     def backward(self, out):
-        self.loss = self.criterion(out, self.labels)
+        dist1, dist2, idx1, idx2= self.criterion(self.labels, out)
+        self.loss = 0.5 * (dist1.mean() + dist2.mean())
         self.loss.backward()
 
     def optimize_parameters(self, writer=False, steps=None):
@@ -117,19 +116,8 @@ class ClassifierModel:
         """
         with torch.no_grad():
             out = self.forward()
-            # compute number of correct
-            if self.opt.dataset_mode == 'autoencoder' :
-                pred_class = out
-            else :
-                pred_class = out.data.max(1)[1]
-                
-            label_class = self.labels
-            print(out, pred_class, label_class)
-            self.export_segmentation(pred_class.cpu())
-            ## rint(out.data, out.data.max(1))
-            # print(pred_class, label_class)
-            correct = self.get_accuracy(pred_class, label_class)
-        return correct, len(label_class), pred_class, label_class
+            
+        return torch.nn.functional.l1_loss(out, self.labels), len(self.labels)
 
     def get_accuracy(self, pred, labels):
         """computes accuracy for classification / segmentation """

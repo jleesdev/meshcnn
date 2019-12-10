@@ -1,9 +1,10 @@
 .idea/*
 *.pyc
 *.m~
-
+.ipynb_checkpoints
 # data files
 *.obj
 checkpoints
 datasets
 runs
+logs

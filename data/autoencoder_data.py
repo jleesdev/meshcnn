@@ -1,10 +1,11 @@
 import os
 import torch
 from data.base_dataset import BaseDataset
-from util.util import is_mesh_file, pad
+from util.util import is_mesh_file, pad, pad_vertices
+import numpy as np
 from models.layers.mesh import Mesh
 
-class ClassificationData(BaseDataset):
+class AutoEncoderData(BaseDataset):
 
     def __init__(self, opt):
         BaseDataset.__init__(self, opt)
@@ -18,26 +19,42 @@ class ClassificationData(BaseDataset):
         self.nclasses = len(self.classes)
         self.size = len(self.paths)
         self.get_mean_std()
-        # modify for network later.
+        # # modify for network later.
         opt.nclasses = self.nclasses
         opt.input_nc = self.ninput_channels
 
     def __getitem__(self, index):
         path = self.paths[index][0]
-        label = self.paths[index][1]
-        mesh = Mesh(file=path, opt=self.opt, hold_history=False, export_folder=self.opt.export_folder)
-        meta = {'mesh': mesh, 'label': label}
+        #print(path)
+        mesh = Mesh(file=path, opt=self.opt, hold_history=True, export_folder=self.opt.export_folder)
+        meta = {}
+        mesh.vs = (mesh.vs - np.mean(mesh.vs, 0)) / np.std(mesh.vs, 0)
+        meta['mesh'] = mesh
         # get edge features
         edge_features = mesh.extract_features()
         edge_features = pad(edge_features, self.opt.ninput_edges)
+        vs = pad_vertices(mesh.vs, 1402)
         meta['edge_features'] = (edge_features - self.mean) / self.std
+        meta['label'] = vs.astype(np.float)
         return meta
 
     def __len__(self):
         return self.size
 
-    # this is when the folders are organized by class...
     @staticmethod
+    def make_dataset(path):
+        meshes = []
+        assert os.path.isdir(path), '%s is not a valid directory' % path
+
+        for root, _, fnames in sorted(os.walk(path)):
+            for fname in fnames:
+                if is_mesh_file(fname):
+                    path = os.path.join(root, fname)
+                    meshes.append(path)
+
+        return meshes
+    
+    @staticmethod    
     def find_classes(dir):
         classes = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
         classes.sort()

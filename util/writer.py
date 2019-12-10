@@ -78,6 +78,12 @@ class Writer:
     @property
     def acc(self):
         return float(self.ncorrect) / self.nexamples
+    
+    def add_figure(self, tag, fig, steps) :
+        self.display.add_figure(tag, fig, global_step=steps)
+        
+    def add_mesh(self, tag, vertices, colors=None, faces=None, config_dict=None, global_step=None, walltime=None) :
+        self.display.add_mesh(tag, vertices, colors=None, faces=None, config_dict=None, global_step=None, walltime=None)
 
     def close(self):
         if self.display is not None:

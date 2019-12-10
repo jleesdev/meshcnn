@@ -10,6 +10,9 @@ def CreateDataset(opt):
     elif opt.dataset_mode == 'classification':
         from data.classification_data import ClassificationData
         dataset = ClassificationData(opt)
+    elif opt.dataset_mode == 'autoencoder':
+        from data.autoencoder_data import AutoEncoderData
+        dataset = AutoEncoderData(opt)
     return dataset
 
 
