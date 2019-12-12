@@ -4,6 +4,17 @@ from os.path import join
 from util.util import seg_accuracy, print_network
 import matplotlib.pyplot as plt
 from mpl_toolkits import mplot3d
+import sys 
+sys.path.append('/home/students/jlee/libs/chamferdist')
+from chamferdist import ChamferDistance
+sys.path.append('/home/students/jlee/libs/icp')
+from icp import icp_R, icp
+import numpy as np
+from emd import EMDLoss
+from pypoisson import poisson_reconstruction
+import point_cloud_utils as pcu
+import scipy
+import os
 
 class AutoEncoderModel:
     """ Class for training Model weights
@@ -53,7 +64,11 @@ class AutoEncoderModel:
         # set inputs
         self.edge_features = input_edge_features.to(self.device).requires_grad_(self.is_train)
         self.labels = labels.to(self.device)
+        self.init_faces = data['init_faces']
+        self.pad_iter = data['pad_iter']
         self.mesh = data['mesh']
+        self.export_folder = data['export_folder']
+        self.filename = data['filename']
         if self.opt.dataset_mode == 'segmentation' and not self.is_train:
             self.soft_label = torch.from_numpy(data['soft_label'])
 
@@ -116,8 +131,31 @@ class AutoEncoderModel:
         """
         with torch.no_grad():
             out = self.forward()
+            dist1, dist2, _, _ = self.criterion(self.labels, out)
+            test_loss = 0.5 * (dist1.mean() + dist2.mean())
             
-        return torch.nn.functional.l1_loss(out, self.labels), len(self.labels)
+            labels = torch.Tensor.cpu(self.labels).numpy()
+            out = torch.Tensor.cpu(out).numpy()
+            
+            for i in range(out.shape[0]) :
+                normals = pcu.estimate_normals(out[i], k=16)
+                #print(n.shape, n)
+                fs, vs = poisson_reconstruction(out[i], normals, depth=5, full_depth=3)
+                print(vs.shape, fs.shape)
+                filename, file_extension = os.path.splitext(self.filename[i])
+                file = '%s/%s_%s%s' % (self.export_folder[i], filename, 'out', file_extension)
+                print(file)
+                self.output_export(vs, fs, file)
+            
+            #print(labels.shape, out.shape)
+            #for i in range(len(labels)) :
+            #    mean_error, R, indices = icp(labels[i], out[i], tolerance=0.0001)
+            #    print(out[i].shape, out[i])
+            #    print(indices.shape, np.unique(indices).shape, indices, np.unique(indices))
+            #print(out[indices[:len(indices)-self.pad_iter]].shape, self.init_faces)
+            #self.output_export(vertices, faces)
+            print(test_loss, len(self.labels))
+        return test_loss, len(self.labels), out, self.labels
 
     def get_accuracy(self, pred, labels):
         """computes accuracy for classification / segmentation """
@@ -129,7 +167,21 @@ class AutoEncoderModel:
             correct = torch.nn.functional.l1_loss(pred, labels)
         return correct
 
-    def export_segmentation(self, pred_seg):
-        if self.opt.dataset_mode == 'segmentation':
-            for meshi, mesh in enumerate(self.mesh):
-                mesh.export_segments(pred_seg[meshi, :])
+    def output_export(self, out, faces, file=None, vcolor=None):
+        if file is None:
+            if self.export_folder :
+                filename, file_extension = os.path.splitext(self.filename)
+                file = '%s/%s_%s%s' % (self.export_folder, filename, 'out', file_extension)
+            else:
+                return
+        faces = faces
+        vs = out
+        
+        with open(file, 'w+') as f:
+            for vi, v in enumerate(vs):
+                vcol = ' %f %f %f' % (vcolor[vi, 0], vcolor[vi, 1], vcolor[vi, 2]) if vcolor is not None else ''
+                f.write("v %f %f %f%s\n" % (v[0], v[1], v[2], vcol))
+            for face_id in range(len(faces) - 1):
+                f.write("f %d %d %d\n" % (faces[face_id][0] + 1, faces[face_id][1] + 1, faces[face_id][2] + 1))
+            f.write("f %d %d %d" % (faces[-1][0] + 1, faces[-1][1] + 1, faces[-1][2] + 1))
+            

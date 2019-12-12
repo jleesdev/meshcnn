@@ -18,7 +18,7 @@ class Mesh:
         self.history_data = None
         if hold_history:
             self.init_history()
-        self.export()
+        self.init_faces = self.export()
 
     def extract_features(self):
         return self.features
@@ -110,6 +110,7 @@ class Mesh:
             f.write("f %d %d %d" % (faces[-1][0] + 1, faces[-1][1] + 1, faces[-1][2] + 1))
             for edge in self.edges:
                 f.write("\ne %d %d" % (new_indices[edge[0]] + 1, new_indices[edge[1]] + 1))
+        return faces
 
     def export_segments(self, segments):
         if not self.export_folder:

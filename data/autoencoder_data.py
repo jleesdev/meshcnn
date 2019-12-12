@@ -30,12 +30,16 @@ class AutoEncoderData(BaseDataset):
         meta = {}
         mesh.vs = (mesh.vs - np.mean(mesh.vs, 0)) / np.std(mesh.vs, 0)
         meta['mesh'] = mesh
+        meta['export_folder'] = mesh.export_folder
+        meta['filename'] = mesh.filename
         # get edge features
         edge_features = mesh.extract_features()
         edge_features = pad(edge_features, self.opt.ninput_edges)
-        vs = pad_vertices(mesh.vs, 1402)
+        vs, pad_iter = pad_vertices(mesh.vs, 1402)
         meta['edge_features'] = (edge_features - self.mean) / self.std
         meta['label'] = vs.astype(np.float)
+        meta['init_faces'] = mesh.init_faces
+        meta['pad_iter'] = pad_iter
         return meta
 
     def __len__(self):

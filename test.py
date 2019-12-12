@@ -20,19 +20,24 @@ def run_test(epoch=-1):
     label_classes = []
     for i, data in enumerate(dataset):
         model.set_input(data)
-        try :
+        if opt.dataset_mode == 'classification' :
+            try :
+                ncorrect, nexamples, pred_class, label_class = model.test()
+                pred_classes.append(pred_class.cpu().numpy())
+                label_classes.append(label_class.cpu().numpy())
+                print(sklearn.metrics.classification_report(np.concatenate(label_classes, axis=None), np.concatenate(pred_classes, axis=None)))
+                writer.update_counter(ncorrect, nexamples)
+            except IndexError:
+                heappop_error_test += 1
+                print('(%d) IndexError occured, passed to next data' % (heappop_error_test))
+                pass
+        else :
             ncorrect, nexamples, pred_class, label_class = model.test()
-            pred_classes.append(pred_class.cpu().numpy())
-            label_classes.append(label_class.cpu().numpy())
             writer.update_counter(ncorrect, nexamples)
-            print(sklearn.metrics.classification_report(np.concatenate(label_classes, axis=None), np.concatenate(pred_classes, axis=None)))
-        except IndexError:
-            heappop_error_test += 1
-            print('(%d) IndexError occured, passed to next data' % (heappop_error_test))
-            pass
         
     writer.print_acc(epoch, writer.acc)
-    print(sklearn.metrics.classification_report(np.concatenate(label_classes, axis=None), np.concatenate(pred_classes, axis=None)))
+    if opt.dataset_mode == 'classification' :
+        print(sklearn.metrics.classification_report(np.concatenate(label_classes, axis=None), np.concatenate(pred_classes, axis=None)))
     return writer.acc
 
 

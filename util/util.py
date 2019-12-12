@@ -69,7 +69,9 @@ def calculate_entropy(np_array):
     return entropy
 
 def pad_vertices(vs, length) :
+    pad_iter = 0
     vs_list = list(vs)
     while len(vs_list) < length :
         vs_list.append(np.mean(vs, axis=0))
-    return np.asarray(vs_list)
+        pad_iter += 1
+    return np.asarray(vs_list), pad_iter
