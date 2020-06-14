@@ -104,7 +104,7 @@ def define_classifier(input_nc, ncf, ninput_edges, nclasses, opt, gpu_ids, arch,
 
     if arch == 'mconvnet':
         net = MeshConvNet(norm_layer, input_nc, ncf, nclasses, ninput_edges, opt.pool_res, opt.fc_n,
-                          opt.resblocks)
+                          opt.resblocks, opt.dropout_p)
     elif arch == 'meshunet':
         down_convs = [input_nc] + ncf
         up_convs = ncf[::-1] + [nclasses]
@@ -138,8 +138,9 @@ class MeshConvNet(nn.Module):
     """Network for learning a global shape descriptor (classification)
     """
     def __init__(self, norm_layer, nf0, conv_res, nclasses, input_res, pool_res, fc_n,
-                 nresblocks=3):
+                 nresblocks=3, dropout_p=0):
         super(MeshConvNet, self).__init__()
+        self.p = dropout_p
         self.k = [nf0] + conv_res
         self.res = [input_res] + pool_res
         norm_args = get_norm_args(norm_layer, self.k[1:])
@@ -149,15 +150,22 @@ class MeshConvNet(nn.Module):
             setattr(self, 'norm{}'.format(i), norm_layer(**norm_args[i]))
             setattr(self, 'pool{}'.format(i), MeshPool(self.res[i + 1]))
 
-
         self.gp = torch.nn.AvgPool1d(self.res[-1])
-        # self.gp = torch.nn.MaxPool1d(self.res[-1])
+        #self.gp = torch.nn.MaxPool1d(self.res[-1])
+        
         self.fcs = []
         self.fcs.append(nn.Linear(self.k[-1], fc_n[0]))
         for i in range(len(fc_n)-1) :
             self.fcs.append(nn.Linear(fc_n[i], fc_n[i+1]))
         self.fcs = nn.ModuleList(self.fcs)
         self.last_fc = nn.Linear(fc_n[-1], nclasses)
+        
+        self.bns = []
+        for i in range(len(fc_n)) :
+            self.bns.append(nn.BatchNorm1d(fc_n[i]))
+        self.bns = nn.ModuleList(self.bns)
+        if self.p != 0 :
+            print('dropout layers are applied (p = %f)' % (self.p))
 
     def forward(self, x, mesh, writer=False, steps=None):
         #print(len(mesh[0].vs))
@@ -178,8 +186,13 @@ class MeshConvNet(nn.Module):
         
         for i in range(len(self.k) - 1):
             x = getattr(self, 'conv{}'.format(i))(x, mesh)
+            if self.p != 0 :
+                x = F.dropout(x, p=self.p)
             x = F.relu(getattr(self, 'norm{}'.format(i))(x))
             x = getattr(self, 'pool{}'.format(i))(x, mesh)
+            if mesh[0].export_folder != '' and i == len(self.k) - 2 :
+                print('export_folder : ' + mesh[0].export_folder)
+                x = getattr(self, 'pool{}'.format(i))(x, mesh)
             vs = mesh[0].vs[mesh[0].v_mask]
             #print(len(vs))
             fig = plt.figure()
@@ -196,13 +209,13 @@ class MeshConvNet(nn.Module):
 
         x = self.gp(x)
         x = x.view(-1, self.k[-1])
-
-        for fc in self.fcs :
-            x = F.relu(fc(x))
+        for fc, bn in zip(self.fcs, self.bns) :
+            #x = F.relu(fc(x)) 2020.02.05
+            x = F.relu(bn(fc(x)))
+            if self.p != 0 :
+                x = F.dropout(x, p=self.p)
         x = self.last_fc(x)
-       # print (x.shape, x)
         #x = F.softmax(x)
-        #print (x.shape, x)
         return x
     
 class MeshAutoEncoder(nn.Module):

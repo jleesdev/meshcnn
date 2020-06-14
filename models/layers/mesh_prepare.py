@@ -200,8 +200,8 @@ def slide_verts(mesh, prct):
             break
     mesh.shifted = shifted / len(mesh.ve)
 
-
-def scale_verts(mesh, mean=1, var=0.1):
+# LEE: changed the variance from 0.1 to 0.01
+def scale_verts(mesh, mean=1, var=0.001):
     for i in range(mesh.vs.shape[1]):
         mesh.vs[:, i] = mesh.vs[:, i] * np.random.normal(mean, var)
 

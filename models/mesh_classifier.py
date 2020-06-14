@@ -37,7 +37,7 @@ class ClassifierModel:
 
         if self.is_train:
             if opt.optim == 'RMSprop' :
-                self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=opt.lr)
+                self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=opt.lr, weight_decay=opt.reg_weight)
             else:
                 self.optimizer = torch.optim.Adam(self.net.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.scheduler = networks.get_scheduler(self.optimizer, opt)
@@ -65,7 +65,7 @@ class ClassifierModel:
         # print(out.shape)
         return out
 
-    def backward(self, out):
+    def backward(self, out, writer=False, steps=None):
         self.loss = self.criterion(out, self.labels)
         self.loss.backward()
 
@@ -73,8 +73,11 @@ class ClassifierModel:
         self.optimizer.zero_grad()
         out = self.forward(writer, steps)
         #print(self.labels)
-        self.backward(out)
+        self.backward(out, writer, steps)
         self.optimizer.step()
+        if writer :
+            with torch.no_grad():
+                writer.update_counter(self.get_accuracy(out.data.max(1)[1], self.labels), out.shape[0])
 
 
 ##################
@@ -124,7 +127,7 @@ class ClassifierModel:
                 pred_class = out.data.max(1)[1]
                 
             label_class = self.labels
-            print(out, pred_class, label_class)
+            #print(out, pred_class, label_class)
             self.export_segmentation(pred_class.cpu())
             ## rint(out.data, out.data.max(1))
             # print(pred_class, label_class)

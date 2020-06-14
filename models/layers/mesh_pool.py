@@ -3,7 +3,8 @@ import torch.nn as nn
 from threading import Thread
 from models.layers.mesh_union import MeshUnion
 import numpy as np
-from heapq import heappop, heapify
+from heapq import heappop, heapify, nlargest
+import copy
 
 
 class MeshPool(nn.Module):
@@ -40,9 +41,11 @@ class MeshPool(nn.Module):
 
     def __pool_main(self, mesh_index):
         mesh = self.__meshes[mesh_index]
+        origin_mesh = copy.deepcopy(mesh)
         queue = self.__build_queue(self.__fe[mesh_index, :, :mesh.edges_count], mesh.edges_count)
         # recycle = []
         # last_queue_len = len(queue)
+        pooled_edges = []
         last_count = mesh.edges_count + 1
         mask = np.ones(mesh.edges_count, dtype=np.bool)
         edge_groups = MeshUnion(mesh.edges_count, self.__fe.device)
@@ -55,11 +58,18 @@ class MeshPool(nn.Module):
             if mask[edge_id]:
                 #print('lets remove_edge!')
                 success = self.__pool_edge(mesh, edge_id, mask, edge_groups)
+                if success :
+                    pooled_edges.append(edge_id)
                 #print(success)
         mesh.clean(mask, edge_groups)
+        nlargest_edges = nlargest(50, queue)
+        nlargest_edges = np.asarray(nlargest_edges)[:,1]
+        nlargest_edges = [int(e) for e in nlargest_edges]
+        # print(nlargest_edges)
+        origin_mesh.export_pooled_edges(pooled_edges=pooled_edges, nlargest_edges=nlargest_edges)
         fe = edge_groups.rebuild_features(self.__fe[mesh_index], mask, self.__out_target)
         self.__updated_fe[mesh_index] = fe
-        #print(mesh.edges_count)
+        # print(mesh.edges_count)
 
     def __pool_edge(self, mesh, edge_id, mask, edge_groups):
         if self.has_boundaries(mesh, edge_id):

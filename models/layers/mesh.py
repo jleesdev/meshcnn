@@ -9,9 +9,11 @@ from models.layers.mesh_prepare import fill_mesh
 
 class Mesh:
 
-    def __init__(self, file=None, opt=None, hold_history=False, export_folder=''):
+    def __init__(self, file=None, opt=None, hold_history=False, export_folder='', label=None):
         self.vs = self.v_mask = self.filename = self.features = self.edge_areas = None
         self.edges = self.gemm_edges = self.sides = None
+        self.label = label
+        self.phase = opt.phase
         self.pool_count = 0
         fill_mesh(self, file, opt)
         self.export_folder = export_folder
@@ -85,11 +87,11 @@ class Mesh:
         
         return {'vs':np.array([vs]), 'fs':np.array([faces])}
 
-    def export(self, file=None, vcolor=None):
+    def export(self, file=None, vcolor=None, pooled_edges=None):
         if file is None:
             if self.export_folder:
                 filename, file_extension = os.path.splitext(self.filename)
-                file = '%s/%s_%d%s' % (self.export_folder, filename, self.pool_count, file_extension)
+                file = '%s/%s/%s/%s_%d%s' % (self.export_folder, self.label, self.phase, filename, self.pool_count, file_extension)
             else:
                 return
         faces = []
@@ -108,9 +110,36 @@ class Mesh:
             for face_id in range(len(faces) - 1):
                 f.write("f %d %d %d\n" % (faces[face_id][0] + 1, faces[face_id][1] + 1, faces[face_id][2] + 1))
             f.write("f %d %d %d" % (faces[-1][0] + 1, faces[-1][1] + 1, faces[-1][2] + 1))
-            for edge in self.edges:
-                f.write("\ne %d %d" % (new_indices[edge[0]] + 1, new_indices[edge[1]] + 1))
+            for i, edge in enumerate(self.edges):
+                f.write("\ne %d %d 0" % (new_indices[edge[0]] + 1, new_indices[edge[1]] + 1))
         return faces
+    
+    def export_pooled_edges(self, pooled_edges, nlargest_edges=None):
+        if self.export_folder:
+            filename, file_extension = os.path.splitext(self.filename)
+            file = '%s/%s/%s/%s_%d%s' % (self.export_folder, self.label, self.phase, filename, self.pool_count, file_extension)
+        else:
+            return
+        
+        fh, abs_path = mkstemp()
+        edge_key = 0
+        with os.fdopen(fh, 'w') as new_file:
+            with open(file) as old_file:
+                for line in old_file:
+                    if line[0] == 'e':
+                        if pooled_edges is not None and edge_key in pooled_edges:
+                            new_file.write('%s %d' % (line.strip()[:-2], 1)) 
+                        elif nlargest_edges is not None and edge_key in nlargest_edges:
+                            new_file.write('%s %d' % (line.strip()[:-2], 2))
+                        else:
+                            new_file.write('%s %d' % (line.strip()[:-2], 0))
+                        new_file.write('\n')
+                        edge_key += 1
+                        
+                    else:
+                        new_file.write(line)
+        os.remove(file)
+        move(abs_path, file)
 
     def export_segments(self, segments):
         if not self.export_folder:

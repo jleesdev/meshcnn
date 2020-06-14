@@ -65,6 +65,8 @@ class BaseOptions:
         if self.opt.export_folder:
             self.opt.export_folder = os.path.join(self.opt.checkpoints_dir, self.opt.name, self.opt.export_folder)
             util.mkdir(self.opt.export_folder)
+            util.mkdir(self.opt.export_folder+'/AD/' + self.opt.phase)
+            util.mkdir(self.opt.export_folder+'/CN/' + self.opt.phase)
 
         if self.is_train:
             print('------------ Options -------------')

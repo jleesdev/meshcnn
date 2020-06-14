@@ -25,7 +25,7 @@ def run_test(epoch=-1):
                 ncorrect, nexamples, pred_class, label_class = model.test()
                 pred_classes.append(pred_class.cpu().numpy())
                 label_classes.append(label_class.cpu().numpy())
-                print(sklearn.metrics.classification_report(np.concatenate(label_classes, axis=None), np.concatenate(pred_classes, axis=None)))
+                #print(sklearn.metrics.classification_report(np.concatenate(label_classes, axis=None), np.concatenate(pred_classes, axis=None)))
                 writer.update_counter(ncorrect, nexamples)
             except IndexError:
                 heappop_error_test += 1

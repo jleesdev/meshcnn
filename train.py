@@ -7,6 +7,9 @@ from util.writer import Writer
 from test import run_test
 import logging
 from pathlib import Path
+from tqdm import tqdm
+import torch.backends.cudnn as cudnn
+import torch
 
 if __name__ == '__main__':
     
@@ -44,6 +47,10 @@ if __name__ == '__main__':
     total_steps = 0
     train_start_time = time.time()
     best_tst_acc = 0.0
+    
+    torch.manual_seed(1)
+    cudnn.benchmark = False
+    cudnn.deterministic = True
 
     for epoch in range(opt.epoch_count, opt.niter + opt.niter_decay + 1):
         epoch_start_time = time.time()
@@ -51,6 +58,7 @@ if __name__ == '__main__':
         epoch_iter = 0
         heappop_error_train = 0
         logger.info('Epoch %d started ...', epoch)
+        writer.reset_counter()
 
         for i, data in enumerate(dataset):
             iter_start_time = time.time()
@@ -73,7 +81,7 @@ if __name__ == '__main__':
                 loss = model.loss
                 t = (time.time() - iter_start_time) / opt.batch_size
                 writer.print_current_losses(epoch, epoch_iter, loss, t, t_data)
-                writer.plot_loss(loss, epoch, epoch_iter, dataset_size)
+                #writer.plot_loss(loss, epoch, epoch_iter, dataset_size)
 
             if i % opt.save_latest_freq == 0:
                 print('saving the latest model (epoch %d, total_steps %d)' %
@@ -81,6 +89,11 @@ if __name__ == '__main__':
                 model.save_network('latest_net')
 
             iter_data_time = time.time()
+            
+        writer.plot_loss(loss, epoch, 1, 1)
+            
+        print('TRAIN ACC [%.3f]'%(writer.acc))
+        writer.plot_train_acc(writer.acc, epoch)
         if epoch % opt.save_epoch_freq == 0:
             print('saving the model at the end of epoch %d, iters %d' %
                   (epoch, total_steps))

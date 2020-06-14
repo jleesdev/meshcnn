@@ -19,7 +19,11 @@ class Writer:
         self.ncorrect = 0
         #
         if opt.is_train and not opt.no_vis and SummaryWriter is not None:
-            self.display = SummaryWriter(comment=opt.name)
+            from datetime import datetime
+            current_time = datetime.now().strftime('%b%d_%H-%M-%S')
+            log_dir = os.path.join('runs/' + opt.dataroot.split('/')[-2], current_time)
+            self.display = SummaryWriter(log_dir+opt.name)
+            print(log_dir + opt.name)
         else:
             self.display = None
 
@@ -63,6 +67,14 @@ class Writer:
     def plot_acc(self, acc, epoch):
         if self.display:
             self.display.add_scalar('data/test_acc', acc, epoch)
+            
+    def plot_reg_loss(self, reg_loss, iters):
+        if self.display:
+            self.display.add_scalar('data/regularization_loss', reg_loss, iters)
+    
+    def plot_train_acc(self, acc, epoch):
+        if self.display:
+            self.display.add_scalar('data/train_acc', acc, epoch)
 
     def reset_counter(self):
         """
